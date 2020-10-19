@@ -36,6 +36,8 @@ public interface APIPath {
     String Blacklist_Get_List = "/admin/blacklist/list";
     String Friend_Get_Alias = "/admin/friend/get_alias";
     String Friend_Set_Alias = "/admin/friend/set_alias";
+    String Friend_Send_Request = "/admin/friend/send_request";
+    String Friend_Get_Requests = "/admin/friend/get_requests";
 
     String Msg_Send = "/admin/message/send";
     String Msg_Recall = "/admin/message/recall";
@@ -54,6 +56,7 @@ public interface APIPath {
     String Group_Member_Quit = "/admin/group/member/quit";
     String Group_Set_Manager = "/admin/group/manager/set";
     String Group_Mute_Member = "/admin/group/manager/mute";
+    String Group_Allow_Member = "/admin/group/manager/allow";
     String Get_User_Groups = "/admin/group/of_user";
 
 

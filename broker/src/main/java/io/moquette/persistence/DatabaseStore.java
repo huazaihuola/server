@@ -86,10 +86,10 @@ public class DatabaseStore {
         try {
             connection = DBUtil.getConnection();
             String sql = "insert into t_settings " +
-                " (`id`, `value`, `desc`) values(?, ?, ?)" +
+                " (`id`, `_value`, `_desc`) values(?, ?, ?)" +
                 " ON DUPLICATE KEY UPDATE " +
-                "`value` = ?," +
-                "`desc` = ?";
+                "`_value` = ?," +
+                "`_desc` = ?";
 
 
             statement = connection.prepareStatement(sql);
@@ -120,7 +120,7 @@ public class DatabaseStore {
 
         try {
             connection = DBUtil.getConnection();
-            String sql = "select `value`, `desc` from t_settings where `id` = ?";
+            String sql = "select `_value`, `_desc` from t_settings where `id` = ?";
 
             statement = connection.prepareStatement(sql);
             int index = 1;
@@ -331,7 +331,7 @@ public class DatabaseStore {
             String sql = "select `_mid`" +
                 ", `_alias`" +
                 ", `_type`" +
-                ", `_dt` from t_group_member where _gid = ?";
+                ", `_dt`, `_create_dt` from t_group_member where _gid = ?";
             statement = connection.prepareStatement(sql);
 
             statement.setString(1, groupId);
@@ -357,6 +357,9 @@ public class DatabaseStore {
 
                 long longValue = rs.getLong(index++);
                 builder.setUpdateDt(longValue);
+
+                longValue = rs.getLong(index++);
+                builder.setCreateDt(longValue);
 
                 WFCMessage.GroupMember member = builder.build();
                 groupMembers.put(groupId, member);
@@ -823,7 +826,16 @@ public class DatabaseStore {
                     }
                 }
                 WFCMessage.Message message = builder.build();
-                messages.add(message);
+                boolean expired = false;
+                if (message.getContent().getExpireDuration() > 0) {
+                    if (System.currentTimeMillis() > message.getServerTimestamp() + message.getContent().getExpireDuration()*1000) {
+                        expired = true;
+                    }
+                }
+
+                if (!expired) {
+                    messages.add(message);
+                }
             }
 
             if (count == 0) {
@@ -1037,6 +1049,10 @@ public class DatabaseStore {
                 long longValue = rs.getLong(index++);
                 builder.setUpdateDt(longValue);
 
+                out.add(builder.build());
+            }
+            if (out.isEmpty()) {
+                WFCMessage.UserSettingEntry.Builder builder = WFCMessage.UserSettingEntry.newBuilder().setScope(999).setKey("").setValue("").setUpdateDt(0);
                 out.add(builder.build());
             }
             return out;
@@ -1338,7 +1354,6 @@ public class DatabaseStore {
     }
 
     void updateSessionDeleted(String uid, String cid, int deleted) {
-        mScheduler.execute(()->{
             Connection connection = null;
             PreparedStatement statement = null;
 
@@ -1363,11 +1378,9 @@ public class DatabaseStore {
             } finally {
                 DBUtil.closeDB(connection, statement);
             }
-        });
     }
 
     void updateSessionPlatform(String uid, String cid, int platform) {
-        mScheduler.execute(()->{
             Connection connection = null;
             PreparedStatement statement = null;
 
@@ -1392,7 +1405,6 @@ public class DatabaseStore {
             } finally {
                 DBUtil.closeDB(connection, statement);
             }
-        });
     }
 
     private boolean strEqual(String left, String right) {
@@ -1652,7 +1664,7 @@ public class DatabaseStore {
                     ", `_mid`" +
                     ", `_alias`" +
                     ", `_type`" +
-                    ", `_dt`) values(?, ?, ?, ?, ?)" +
+                    ", `_dt`, `_create_dt`) values(?, ?, ?, ?, ?, ?)" +
                     " ON DUPLICATE KEY UPDATE " +
                     "`_alias` = ?," +
                     "`_type` = ?," +
@@ -1673,6 +1685,7 @@ public class DatabaseStore {
                     statement.setString(index++, member.getAlias());
                     statement.setInt(index++, member.getType());
                     statement.setLong(index++, dt);
+                    statement.setLong(index++, member.getCreateDt());
                     statement.setString(index++, member.getAlias());
                     statement.setInt(index++, member.getType());
                     statement.setLong(index++, dt);
@@ -2176,6 +2189,33 @@ public class DatabaseStore {
                 DBUtil.closeDB(connection, statement);
             }
         });
+    }
+    
+    boolean isUidAndNameConflict(String uid, String name) {
+        Connection connection = null;
+        PreparedStatement statement = null;
+        ResultSet rs = null;
+        long start = System.currentTimeMillis();
+        try {
+            connection = DBUtil.getConnection();
+            String sql = "select _uid from t_user where _name = ? and _uid <> ? limit 1";
+            statement = connection.prepareStatement(sql);
+            statement.setString(1, name);
+            statement.setString(2, uid);
+            rs = statement.executeQuery();
+            if (rs.next()) {
+                String conflictId = rs.getString(1);
+                LOG.error("user {} already have name {} !!!", conflictId, name);
+                return true;
+            }
+        } catch (SQLException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            Utility.printExecption(LOG, e);
+        } finally {
+            DBUtil.closeDB(connection, statement, rs);
+        }
+        return false;
     }
 
     void updateUser(final WFCMessage.User user) throws Exception {

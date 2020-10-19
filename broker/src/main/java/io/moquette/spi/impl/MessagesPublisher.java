@@ -16,6 +16,7 @@
 
 package io.moquette.spi.impl;
 
+import cn.wildfirechat.pojos.OutputMessageData;
 import cn.wildfirechat.proto.ProtoConstants;
 import cn.wildfirechat.proto.WFCMessage;
 import cn.wildfirechat.push.PushServer;
@@ -24,11 +25,11 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.util.StringUtil;
 import cn.wildfirechat.pojos.OutputNotifyChannelSubscribeStatus;
 import cn.wildfirechat.pojos.SendMessageData;
-import com.xiaoleilu.hutool.system.UserInfo;
 import com.xiaoleilu.loServer.model.FriendData;
 import io.moquette.persistence.*;
 import io.moquette.persistence.MemorySessionStore.Session;
 import io.moquette.server.ConnectionDescriptorStore;
+import io.moquette.server.Server;
 import io.moquette.spi.IMessagesStore;
 import io.moquette.spi.ISessionsStore;
 import io.netty.buffer.ByteBuf;
@@ -158,7 +159,7 @@ public class MessagesPublisher {
         }
     }
 
-    private void publish2Receivers(String sender, int conversationType, String target, int line, long messageHead, Collection<String> receivers, String pushContent, String exceptClientId, int pullType, int messageContentType, long serverTime, int mentionType, List<String> mentionTargets, int persistFlag) {
+    private void publish2Receivers(String sender, int conversationType, String target, int line, long messageHead, Collection<String> receivers, String pushContent, String pushData, String exceptClientId, int pullType, int messageContentType, long serverTime, int mentionType, List<String> mentionTargets, int persistFlag) {
         if (persistFlag == Transparent) {
             publishTransparentMessage2Receivers(messageHead, receivers, pullType);
             return;
@@ -175,7 +176,7 @@ public class MessagesPublisher {
                             message = m_messagesStore.getMessage(messageHead);
                         }
                         final WFCMessage.Message finalMsg = message;
-                        executorCallback.execute(() -> HttpUtils.httpJsonPost(robot.getCallback(), new Gson().toJson(SendMessageData.fromProtoMessage(finalMsg), SendMessageData.class)));
+                        Server.getServer().getCallbackScheduler().execute(() -> HttpUtils.httpJsonPost(robot.getCallback(), new Gson().toJson(SendMessageData.fromProtoMessage(finalMsg), SendMessageData.class)));
                         continue;
                     }
                 }
@@ -197,6 +198,23 @@ public class MessagesPublisher {
             if (pullType == ProtoConstants.PullType.Pull_ChatRoom) {
                 targetClients = m_messagesStore.getChatroomMemberClient(user);
             }
+            boolean isPcOnline = false;
+
+            if (!user.equals(sender)) {
+                for (Session targetSession : sessions) {
+                    if (targetSession.getPlatform() == ProtoConstants.Platform.Platform_WEB
+                        || targetSession.getPlatform() == ProtoConstants.Platform.Platform_Windows
+                        || targetSession.getPlatform() == ProtoConstants.Platform.Platform_LINUX
+                        || targetSession.getPlatform() == ProtoConstants.Platform.Platform_OSX) {
+                        boolean targetIsActive = this.connectionDescriptors.isConnected(targetSession.getClientSession().clientID);
+                        if (targetIsActive) {
+                            isPcOnline = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             for (Session targetSession : sessions) {
                 //超过7天不活跃的用户忽略
                 if(System.currentTimeMillis() - targetSession.getLastActiveTime() > 7 * 24 * 60 * 60 * 1000) {
@@ -250,10 +268,15 @@ public class MessagesPublisher {
                             LOG.info("The user {} is global sliented", user);
                             isSlient = true;
                         }
+
+                        if (isPcOnline && m_messagesStore.getSilentWhenPcOnline(user)) {
+                            LOG.info("The user {} pc online and silent when pc online", user);
+                            isSlient = true;
+                        }
                     }
 
-                    if (!StringUtil.isNullOrEmpty(pushContent) || messageContentType == 400 || messageContentType == 402) {
-                        if (!isSlient) {
+                    if (!StringUtil.isNullOrEmpty(pushContent) || messageContentType == 400) {
+                        if (!isSlient && (persistFlag & 0x02) > 0) {
                             targetSession.setUnReceivedMsgs(targetSession.getUnReceivedMsgs() + 1);
                         }
                     }
@@ -331,7 +354,7 @@ public class MessagesPublisher {
                             name = fd.getAlias();
                         }
                     }
-                    this.messageSender.sendPush(sender, conversationType, target, line, messageHead, targetSession.getClientID(), pushContent, messageContentType, serverTime, name, targetName, targetSession.getUnReceivedMsgs(), curMentionType, isHiddenDetail, targetSession.getLanguage());
+                    this.messageSender.sendPush(sender, conversationType, target, line, messageHead, targetSession.getClientID(), pushContent, pushData, messageContentType, serverTime, name, targetName, targetSession.getUnReceivedMsgs(), curMentionType, isHiddenDetail, targetSession.getLanguage());
                 }
 
             }
@@ -509,7 +532,7 @@ public class MessagesPublisher {
         if (message.getConversation().getType() == ProtoConstants.ConversationType.ConversationType_Channel) {
             WFCMessage.ChannelInfo channelInfo = m_messagesStore.getChannelInfo(message.getConversation().getTarget());
             if (channelInfo != null && !StringUtil.isNullOrEmpty(channelInfo.getCallback())) {
-                executorCallback.execute(() -> HttpUtils.httpJsonPost(channelInfo.getCallback() + "/message", new Gson().toJson(SendMessageData.fromProtoMessage(message), SendMessageData.class)));
+                Server.getServer().getCallbackScheduler().execute(() -> HttpUtils.httpJsonPost(channelInfo.getCallback() + "/message", new Gson().toJson(SendMessageData.fromProtoMessage(message), SendMessageData.class)));
             }
         }
         long messageId = message.getMessageId();
@@ -544,18 +567,19 @@ public class MessagesPublisher {
                     message.getConversation().getType(), message.getConversation().getTarget(), message.getConversation().getLine(),
                     messageId,
                     receivers,
-                    pushContent, exceptClientId, pullType, message.getContent().getType(), message.getServerTimestamp(), message.getContent().getMentionedType(), message.getContent().getMentionedTargetList(), message.getContent().getPersistFlag());
+                    pushContent, message.getContent().getPushData(), exceptClientId, pullType, message.getContent().getType(), message.getServerTimestamp(), message.getContent().getMentionedType(), message.getContent().getMentionedTargetList(), message.getContent().getPersistFlag());
 
     }
 
     public void forwardMessage(final WFCMessage.Message message, String forwardUrl) {
-        executorCallback.execute(() -> HttpUtils.httpJsonPost(forwardUrl, new Gson().toJson(SendMessageData.fromProtoMessage(message), SendMessageData.class)));
+        Server.getServer().getCallbackScheduler().execute(() -> HttpUtils.httpJsonPost(forwardUrl, new Gson().toJson(OutputMessageData.fromProtoMessage(message), OutputMessageData.class)));
     }
 
     public void notifyChannelListenStatusChanged(WFCMessage.ChannelInfo channelInfo, String user, boolean listen) {
         if (channelInfo == null || StringUtil.isNullOrEmpty(channelInfo.getCallback())) {
             return;
         }
-        executorCallback.execute(() -> HttpUtils.httpJsonPost(channelInfo.getCallback() + "/subscribe", new Gson().toJson(new OutputNotifyChannelSubscribeStatus(user, channelInfo.getTargetId(), listen), OutputNotifyChannelSubscribeStatus.class)));
+
+        Server.getServer().getCallbackScheduler().execute(() -> HttpUtils.httpJsonPost(channelInfo.getCallback() + "/subscribe", new Gson().toJson(new OutputNotifyChannelSubscribeStatus(user, channelInfo.getTargetId(), listen), OutputNotifyChannelSubscribeStatus.class)));
     }
 }
