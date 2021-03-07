@@ -16,6 +16,7 @@
 
 package io.moquette.spi;
 
+import cn.wildfirechat.pojos.InputOutputUserInfo;
 import cn.wildfirechat.pojos.SystemSettingPojo;
 import cn.wildfirechat.proto.WFCMessage;
 import com.xiaoleilu.loServer.model.FriendData;
@@ -30,6 +31,7 @@ import io.netty.handler.codec.mqtt.MqttQoS;
 import cn.wildfirechat.common.ErrorCode;
 
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 
@@ -99,7 +101,7 @@ public interface IMessagesStore {
     DatabaseStore getDatabaseStore();
     WFCMessage.Message storeMessage(String fromUser, String fromClientId, WFCMessage.Message message);
     void storeSensitiveMessage(WFCMessage.Message message);
-	int getNotifyReceivers(String fromUser, WFCMessage.Message.Builder message, Set<String> notifyReceivers, boolean ignoreMsg);
+	int getNotifyReceivers(String fromUser, WFCMessage.Message.Builder message, Set<String> notifyReceivers);
     Set<String> getAllEnds();
     WFCMessage.PullMessageResult fetchMessage(String user, String exceptClientId, long fromMessageId, int pullType);
     WFCMessage.PullMessageResult loadRemoteMessages(String user, WFCMessage.Conversation conversation, long beforeUid, int count);
@@ -121,14 +123,18 @@ public interface IMessagesStore {
     ErrorCode setGroupManager(String operator, String groupId, int type, List<String> userList, boolean isAdmin);
     boolean isMemberInGroup(String member, String groupId);
     ErrorCode canSendMessageInGroup(String member, String groupId);
+    Set<String> getGroupManagers(String groupId, boolean includeOwner);
 
     ErrorCode recallMessage(long messageUid, String operatorId, String clientId, boolean isAdmin);
+    ErrorCode recallCastMessage(long messageUid, String operatorId);
 
     void clearUserMessages(String userId);
 
     WFCMessage.Robot getRobot(String robotId);
     void addRobot(WFCMessage.Robot robot);
-    ErrorCode getUserInfo(List<WFCMessage.UserRequest> requestList, WFCMessage.PullUserResult.Builder builder);
+
+    ErrorCode getUserInfo(String fromUser, List<WFCMessage.UserRequest> requestList, WFCMessage.PullUserResult.Builder builder);
+
     ErrorCode modifyUserInfo(String userId, WFCMessage.ModifyMyInfoRequest request) throws Exception;
 
     void updateUserOnlineSetting(MemorySessionStore.Session session, boolean online);
@@ -137,8 +143,10 @@ public interface IMessagesStore {
     int getUserStatus(String userId);
     List<InputOutputUserBlockStatus> getUserStatusList();
 
+    ErrorCode updateUserInfo(InputOutputUserInfo userInfo, int flag);
     void addUserInfo(WFCMessage.User user, String password) throws Exception;
     void destoryUser(String userId);
+    void updateUserInfo(WFCMessage.User user) throws Exception;
     WFCMessage.User getUserInfo(String userId);
     WFCMessage.User getUserInfoByName(String name);
     WFCMessage.User getUserInfoByMobile(String mobile);
@@ -184,12 +192,12 @@ public interface IMessagesStore {
     List<WFCMessage.UserSettingEntry> getUserSetting(String userId, int scope);
     long updateUserSettings(String userId, WFCMessage.ModifyUserSettingReq request);
     void clearUserSettings(String userId);
+    boolean getUserGlobalSilent(String userId);
 
-    boolean getUserGlobalSlient(String userId);
     boolean getUserPushHiddenDetail(String userId);
-    boolean getUserConversationSlient(String userId, WFCMessage.Conversation conversation);
+    boolean getUserConversationSilent(String userId, WFCMessage.Conversation conversation);
     boolean getSilentWhenPcOnline(String userId);
-
+    boolean isUserNoDisturbing(String userId);
     ErrorCode createChannel(String operator, WFCMessage.ChannelInfo channelInfo);
     void clearUserChannels(String userId);
     ErrorCode modifyChannelInfo(String operator, String channelId, int modifyType, String value);
@@ -207,6 +215,12 @@ public interface IMessagesStore {
     List<String> getAllSensitiveWords();
 
     WFCMessage.Message getMessage(long messageId);
+
+    boolean isAllowClientCustomGroupNotification();
+    int getVisibleQuitKickoffNotification();
+
+    List<Integer> getClientForbiddenSendTypes();
+
     long getMessageHead(String user);
     long getFriendHead(String user);
     long getFriendRqHead(String user);

@@ -12,9 +12,12 @@ public interface IMTopic {
 	String SendMessageTopic = "MS";
     String MultiCastMessageTopic = "MMC";
     String RecallMessageTopic = "MR";
+    String RecallMultiCastMessageTopic = "MRMC";
 	String PullMessageTopic = "MP";
 	String NotifyMessageTopic = "MN";
     String NotifyRecallMessageTopic = "RMN";
+    String NotifyOffline = "ROFL";
+
     String BroadcastMessageTopic = "MBC";
 
     String GetUserSettingTopic = "UG";

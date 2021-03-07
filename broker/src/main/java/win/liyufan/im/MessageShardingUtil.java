@@ -10,6 +10,7 @@ package win.liyufan.im;
 
 import java.util.Calendar;
 import java.util.Date;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MessageShardingUtil {
     private static SpinLock mLock = new SpinLock();
@@ -36,9 +37,8 @@ public class MessageShardingUtil {
      */
     public static long generateId() throws Exception {
         mLock.lock();
-        rotateId = (rotateId + 1)&rotateIdMask;
-        mLock.unLock();
 
+        rotateId = (rotateId + 1)&rotateIdMask;
         long id = System.currentTimeMillis() - T201801010000;
 
         if (id > timeId) {
@@ -75,6 +75,10 @@ public class MessageShardingUtil {
 
         id <<= rotateIdWidth;
         id += rotateId;
+
+        mLock.unLock();
+
+
         return id;
     }
 
@@ -84,7 +88,7 @@ public class MessageShardingUtil {
         }
 
         Calendar calendar = Calendar.getInstance();
-        if (mid != Long.MAX_VALUE) {
+        if (mid != Long.MAX_VALUE && mid != 0) {
             mid >>= (nodeIdWidth + rotateIdWidth);
             Date date = new Date(mid + T201801010000);
             calendar.setTime(date);
@@ -97,8 +101,32 @@ public class MessageShardingUtil {
         year %= 3;
         return "t_messages_" + (year * 12 + month);
     }
+    static Calendar getCalendarFromMessageId(long mid) {
+        Calendar calendar = Calendar.getInstance();
+        if (mid != Long.MAX_VALUE && mid != 0) {
+            mid >>= (nodeIdWidth + rotateIdWidth);
+            Date date = new Date(mid + T201801010000);
+            calendar.setTime(date);
+        } else {
+            Date date = new Date(System.currentTimeMillis());
+            calendar.setTime(date);
+        }
+        return calendar;
+    }
+    public static long getMsgIdFromTimestamp(long timestamp) {
+        long id = timestamp - T201801010000;
+
+        id <<= rotateIdWidth;
+        id <<= nodeIdWidth;
+
+        return id;
+    }
 
     public static String getPreviousMessageTable(long mid) {
+        return getMessageTable(mid, -1);
+    }
+
+    public static String getMessageTable(long mid, int offset) {
         if (DBUtil.IsEmbedDB) {
             return null;
         }
@@ -110,11 +138,40 @@ public class MessageShardingUtil {
         int month = calendar.get(Calendar.MONTH);
         int year = calendar.get(Calendar.YEAR);
         year %= 3;
-        month = month - 1;
-        if (month == -1) {
-            month = 11;
+
+        month = month + offset;
+        while (month < 0) {
+            month += 12;
             year = (year + 3 - 1)%3;
         }
+        while (month >= 12) {
+            month -= 12;
+            year = (year + 1)%3;
+        }
+
         return "t_messages_" + (year * 12 + month);
+    }
+
+    public static void main(String[] args) throws Exception {
+        ConcurrentHashMap<Long, Integer> messageIds = new ConcurrentHashMap<>();
+
+        int threadCount = 1000;
+        int loop = 1000000;
+        for (int i = 0; i < threadCount; i++) {
+            new Thread(()->{
+                for (int j = 0; j < loop; j++) {
+                    try {
+                        long mid = generateId();
+                        if(messageIds.put(mid, j) != null) {
+                            System.out.println("Duplicated message id !!!!!!" + mid);
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
+        }
+
+        Thread.sleep(1000 * 60 * 10);
     }
 }
